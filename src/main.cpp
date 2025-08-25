@@ -158,7 +158,7 @@ void setup() {
   char timeFileName[64];
   sprintf(timeFileName, "/ublox_data/%04d%02d%02d_%02d%02d%02d.bin",
           dt.date.year, dt.date.month, dt.date.date,
-          dt.time.hours, dt.time.minutes, dt.time.seconds);
+          dt.time.hours + 9, dt.time.minutes, dt.time.seconds);
   fileName = String(timeFileName);
 
   //書き込みテスト
@@ -200,7 +200,22 @@ void setup() {
   M5.Display.setTextSize(textSize);
   M5.Display.fillScreen(TFT_BLACK);
   M5.Display.setCursor(0, 0);
-  M5.Display.println("UART Viewer start...");
+  M5.Display.setTextColor(TFT_WHITE);
+  M5.Display.println("Mode: GPS GGA Data");
+  M5.Display.println("==================");
+  M5.Display.setTextColor(TFT_CYAN);
+  M5.Display.println("Time:");
+  M5.Display.setTextColor(TFT_GREEN);
+  M5.Display.println("Lat: ");
+  M5.Display.setTextColor(TFT_YELLOW);
+  M5.Display.println("Lon: ");
+  M5.Display.setTextColor(TFT_MAGENTA);
+  M5.Display.println("Sats:");
+  M5.Display.setTextColor(TFT_WHITE);
+  M5.Display.println("Alt: ");
+  M5.Display.println("HDOP:");
+  M5.Display.println("Fix: ");
+  M5.Display.println("Mode:");
 }
 
 
@@ -286,6 +301,30 @@ UBXMessage currentUBX;
 NMEAMessage currentNMEA;
 String nmeaBuffer;
 
+// NMEA GGAデータ構造体
+struct GGAData {
+  String time;        // 時刻 (HHMMSS.SS)
+  double latitude;    // 緯度 (度)
+  char latDir;        // 緯度方向 (N/S)
+  double longitude;   // 経度 (度)
+  char lonDir;        // 経度方向 (E/W)
+  int quality;        // 品質インジケータ
+  int numSat;         // 使用衛星数
+  double hdop;        // 水平精度
+  double altitude;    // 高度
+  bool valid;         // データ有効性
+};
+
+// NMEA GSAデータ構造体
+struct GSAData {
+  String mode;        // M: Manual, A: Automatic
+  int fixType;        // 1: 測位不可, 2: 2D測位, 3: 3D測位
+  double pdop;        // Position dilution of precision
+  double hdop;        // Horizontal dilution of precision
+  double vdop;        // Vertical dilution of precision
+  bool valid;         // データ有効性
+};
+
 // データパース用の構造体
 struct ParsedData {
   String timestamp;
@@ -295,9 +334,10 @@ struct ParsedData {
   bool valid;
 };
 
+
 // 表示モード
 enum DisplayMode {
-  MODE_RAW = 0,      // 生データ表示
+  MODE_GGA = 0,      // GGA情報表示
   MODE_HEX = 1,      // 16進表示
   MODE_UBX = 2,      // UBXメッセージ表示
   MODE_NMEA = 3,     // NMEAメッセージ表示
@@ -307,8 +347,127 @@ enum DisplayMode {
   MODE_FIELD3 = 7    // フィールド3のみ
 };
 
-DisplayMode currentMode = MODE_RAW;
+DisplayMode currentMode = MODE_GGA;  // デフォルトをGGAモードに変更
 ParsedData lastParsedData;
+GGAData lastGGA;
+GSAData lastGSA;
+
+// GGA表示の初期化フラグ
+bool ggaDisplayInitialized = false;
+
+// GGA表示を初期化する関数
+void initGGADisplay() {
+  M5.Display.fillScreen(TFT_BLACK);
+  M5.Display.setCursor(0, 0);
+  M5.Display.setTextColor(TFT_WHITE);
+  M5.Display.println("Mode: GPS GGA Data");
+  M5.Display.println("==================");
+  M5.Display.setTextColor(TFT_CYAN);
+  M5.Display.println("Time:");
+  M5.Display.setTextColor(TFT_GREEN);
+  M5.Display.println("Lat: ");
+  M5.Display.setTextColor(TFT_YELLOW);
+  M5.Display.println("Lon: ");
+  M5.Display.setTextColor(TFT_MAGENTA);
+  M5.Display.println("Sats:");
+  M5.Display.setTextColor(TFT_WHITE);
+  M5.Display.println("Alt: ");
+  M5.Display.println("HDOP:");
+  M5.Display.println("Fix: ");
+  M5.Display.println("Mode:");  // GSA測位ステータス行を追加
+  ggaDisplayInitialized = true;
+}
+
+// GGA数値のみを更新する関数
+void updateGGAValues() {
+  if (!ggaDisplayInitialized) {
+    initGGADisplay();
+  }
+  
+  if (lastGGA.valid) {
+    // 時刻更新（3行目）
+    M5.Display.setCursor(60, 2 * lineHeight);
+    M5.Display.setTextColor(TFT_BLACK);  // 背景色で消去
+    M5.Display.printf("              ");  // 空白で消去
+    M5.Display.setCursor(60, 2 * lineHeight);
+    M5.Display.setTextColor(TFT_CYAN);
+    M5.Display.printf("%s UTC", lastGGA.time.c_str());
+    
+    // 緯度更新（4行目）
+    M5.Display.setCursor(50, 3 * lineHeight);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.printf("                    ");
+    M5.Display.setCursor(50, 3 * lineHeight);
+    M5.Display.setTextColor(TFT_GREEN);
+    M5.Display.printf("%.6f %c", lastGGA.latitude, lastGGA.latDir);
+    
+    // 経度更新（5行目）
+    M5.Display.setCursor(50, 4 * lineHeight);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.printf("                    ");
+    M5.Display.setCursor(50, 4 * lineHeight);
+    M5.Display.setTextColor(TFT_YELLOW);
+    M5.Display.printf("%.6f %c", lastGGA.longitude, lastGGA.lonDir);
+    
+    // 衛星数更新（6行目）
+    M5.Display.setCursor(60, 5 * lineHeight);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.printf("      ");
+    M5.Display.setCursor(60, 5 * lineHeight);
+    M5.Display.setTextColor(TFT_MAGENTA);
+    M5.Display.printf("%d", lastGGA.numSat);
+    
+    // 高度更新（7行目）
+    M5.Display.setCursor(50, 6 * lineHeight);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.printf("            ");
+    M5.Display.setCursor(50, 6 * lineHeight);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.printf("%.1f m", lastGGA.altitude);
+    
+    // HDOP更新（8行目）
+    M5.Display.setCursor(60, 7 * lineHeight);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.printf("        ");
+    M5.Display.setCursor(60, 7 * lineHeight);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.printf("%.1f", lastGGA.hdop);
+    
+    // Fix品質更新（9行目）
+    M5.Display.setCursor(50, 8 * lineHeight);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.printf("          ");
+    M5.Display.setCursor(50, 8 * lineHeight);
+    M5.Display.setTextColor(lastGGA.quality > 1 ? TFT_GREEN : TFT_RED);
+    M5.Display.printf("%s", 
+                     lastGGA.quality == 0 ? "No Fix" :
+                     lastGGA.quality == 1 ? "GPS" :
+                     lastGGA.quality == 2 ? "DGPS" : "RTK");
+                     
+    // GSA測位ステータス更新（10行目）
+    M5.Display.setCursor(60, 9 * lineHeight);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.printf("            ");
+    M5.Display.setCursor(60, 9 * lineHeight);
+    if (lastGSA.valid) {
+      M5.Display.setTextColor(lastGSA.fixType == 3 ? TFT_GREEN : 
+                             lastGSA.fixType == 2 ? TFT_YELLOW : TFT_RED);
+      M5.Display.printf("%s", 
+                       lastGSA.fixType == 1 ? "No Fix" :
+                       lastGSA.fixType == 2 ? "2D Fix" : "3D Fix");
+    } else {
+      M5.Display.setTextColor(TFT_WHITE);
+      M5.Display.printf("No GSA");
+    }
+  } else {
+    // データが無効な場合は「No GPS Data」表示
+    M5.Display.setCursor(0, 3 * lineHeight);
+    M5.Display.setTextColor(TFT_RED);
+    M5.Display.println("No GPS Data        ");
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.println("Waiting for GGA... ");
+  }
+}
 
 // UBXチェックサム計算
 void calculateUBXChecksum(const std::vector<uint8_t>& data, uint8_t& ckA, uint8_t& ckB) {
@@ -441,6 +600,130 @@ MessageType parseMessage(uint8_t byte) {
   return nmeaResult;
 }
 
+// NMEA度分秒を度に変換
+double convertDMSToDegrees(double dms) {
+  int degrees = (int)(dms / 100);
+  double minutes = dms - (degrees * 100);
+  return degrees + (minutes / 60.0);
+}
+
+// GGAメッセージパーサー
+GGAData parseGGA(const String& sentence) {
+  GGAData gga;
+  gga.valid = false;
+  gga.latitude = 0;
+  gga.longitude = 0;
+  gga.quality = 0;
+  gga.numSat = 0;
+  gga.hdop = 0;
+  gga.altitude = 0;
+  gga.latDir = 'N';
+  gga.lonDir = 'E';
+  
+  if (!sentence.startsWith("$") || sentence.indexOf("GGA") == -1) {
+    return gga;
+  }
+  
+  // カンマで分割
+  std::vector<String> fields;
+  int start = 0;
+  int end = 0;
+  while ((end = sentence.indexOf(',', start)) != -1) {
+    fields.push_back(sentence.substring(start, end));
+    start = end + 1;
+  }
+  // 最後のフィールド（チェックサム含む）
+  String lastField = sentence.substring(start);
+  int asterisk = lastField.indexOf('*');
+  if (asterisk != -1) {
+    lastField = lastField.substring(0, asterisk);
+  }
+  fields.push_back(lastField);
+  
+  if (fields.size() < 15) return gga;  // GGAは最低15フィールド必要
+  
+  // フィールドをパース
+  gga.time = fields[1];               // フィールド1: 時刻
+  
+  if (fields[2].length() > 0) {       // フィールド2: 緯度
+    gga.latitude = convertDMSToDegrees(fields[2].toDouble());
+    if (fields[3].length() > 0) {
+      gga.latDir = fields[3].charAt(0); // フィールド3: 緯度方向
+    }
+  }
+  
+  if (fields[4].length() > 0) {       // フィールド4: 経度
+    gga.longitude = convertDMSToDegrees(fields[4].toDouble());
+    if (fields[5].length() > 0) {
+      gga.lonDir = fields[5].charAt(0); // フィールド5: 経度方向
+    }
+  }
+  
+  gga.quality = fields[6].toInt();    // フィールド6: 品質
+  gga.numSat = fields[7].toInt();     // フィールド7: 使用衛星数
+  
+  if (fields[8].length() > 0) {
+    gga.hdop = fields[8].toDouble();  // フィールド8: HDOP
+  }
+  
+  if (fields[9].length() > 0) {
+    gga.altitude = fields[9].toDouble(); // フィールド9: 高度
+  }
+  
+  gga.valid = (gga.quality > 0 && gga.numSat > 0);
+  return gga;
+}
+
+// GSAメッセージパーサー
+GSAData parseGSA(const String& sentence) {
+  GSAData gsa;
+  gsa.valid = false;
+  gsa.fixType = 1;  // デフォルト：測位不可
+  gsa.pdop = 0;
+  gsa.hdop = 0;
+  gsa.vdop = 0;
+  
+  if (!sentence.startsWith("$") || sentence.indexOf("GSA") == -1) {
+    return gsa;
+  }
+  
+  // カンマで分割
+  std::vector<String> fields;
+  int start = 0;
+  int end = 0;
+  while ((end = sentence.indexOf(',', start)) != -1) {
+    fields.push_back(sentence.substring(start, end));
+    start = end + 1;
+  }
+  // 最後のフィールド（チェックサム含む）
+  String lastField = sentence.substring(start);
+  int asterisk = lastField.indexOf('*');
+  if (asterisk != -1) {
+    lastField = lastField.substring(0, asterisk);
+  }
+  fields.push_back(lastField);
+  
+  if (fields.size() < 18) return gsa;  // GSAは最低18フィールド必要
+  
+  // フィールドをパース
+  gsa.mode = fields[1];               // フィールド1: モード (M/A)
+  gsa.fixType = fields[2].toInt();    // フィールド2: Fix Type (1/2/3)
+  
+  // PDOP, HDOP, VDOP (フィールド15, 16, 17)
+  if (fields[15].length() > 0) {
+    gsa.pdop = fields[15].toDouble();
+  }
+  if (fields[16].length() > 0) {
+    gsa.hdop = fields[16].toDouble();
+  }
+  if (fields[17].length() > 0) {
+    gsa.vdop = fields[17].toDouble();
+  }
+  
+  gsa.valid = (gsa.fixType >= 1 && gsa.fixType <= 3);
+  return gsa;
+}
+
 // CSVデータをパースする関数
 ParsedData parseCSVLine(const String& line) {
   ParsedData data;
@@ -479,12 +762,16 @@ void updateDisplay() {
   M5.Display.setTextColor(TFT_WHITE);
   
   switch (currentMode) {
-    case MODE_RAW:
-      M5.Display.println("Mode: Raw Data");
+    case MODE_GGA:
+      if (!ggaDisplayInitialized) {
+        initGGADisplay();
+      }
       break;
+      
     case MODE_HEX:
       M5.Display.println("Mode: Hex Display");
       break;
+      
     case MODE_UBX:
       M5.Display.println("Mode: UBX Messages");
       if (currentUBX.valid) {
@@ -494,6 +781,7 @@ void updateDisplay() {
         M5.Display.printf("Checksum: %s\n", currentUBX.valid ? "OK" : "ERROR");
       }
       break;
+      
     case MODE_NMEA:
       M5.Display.println("Mode: NMEA Messages");
       if (currentNMEA.valid) {
@@ -502,6 +790,7 @@ void updateDisplay() {
         M5.Display.printf("Sentence: %s\n", currentNMEA.sentence.c_str());
       }
       break;
+      
     case MODE_PARSED:
       M5.Display.println("Mode: Parsed");
       if (lastParsedData.valid) {
@@ -510,6 +799,7 @@ void updateDisplay() {
         M5.Display.printf("F3: %s\n", lastParsedData.field3.c_str());
       }
       break;
+      
     case MODE_FIELD1:
       M5.Display.println("Mode: Field 1");
       if (lastParsedData.valid) {
@@ -518,6 +808,7 @@ void updateDisplay() {
         M5.Display.setTextSize(textSize);
       }
       break;
+      
     case MODE_FIELD2:
       M5.Display.println("Mode: Field 2");
       if (lastParsedData.valid) {
@@ -526,6 +817,7 @@ void updateDisplay() {
         M5.Display.setTextSize(textSize);
       }
       break;
+      
     case MODE_FIELD3:
       M5.Display.println("Mode: Field 3");
       if (lastParsedData.valid) {
@@ -542,6 +834,7 @@ void loop() {
   M5.update();
   if (M5.BtnA.wasPressed()) {
     currentMode = (DisplayMode)((currentMode + 1) % 8);
+    ggaDisplayInitialized = false;  // 表示モード変更時に初期化フラグをリセット
     M5.Display.fillScreen(TFT_BLACK);
     updateDisplay();
   }
@@ -559,20 +852,7 @@ void loop() {
     
     // 完成したメッセージの処理
     if (msgType == MSG_UBX) {
-      if (currentMode == MODE_RAW) {
-        // RAWモードでUBXメッセージ名とサイズを表示
-        int nextY = M5.Display.getCursorY() + lineHeight;
-        if (nextY >= M5.Display.height()) {
-          M5.Display.fillScreen(TFT_BLACK);
-          M5.Display.setCursor(0, 0);
-          updateDisplay();
-        } else {
-          M5.Display.setCursor(0, nextY);
-        }
-        M5.Display.setTextColor(TFT_CYAN);  // UBXメッセージは水色で表示
-        M5.Display.printf("%s Size: %d\n", currentUBX.msgName.c_str(), currentUBX.length + 8);
-        M5.Display.setTextColor(TFT_WHITE); // 色をリセット
-      } else if (currentMode == MODE_UBX) {
+      if (currentMode == MODE_UBX) {
         M5.Display.fillScreen(TFT_BLACK);
         updateDisplay();
         M5.Display.printf("UBX: Class=0x%02X ID=0x%02X Len=%d %s\n", 
@@ -580,20 +860,31 @@ void loop() {
                          currentUBX.valid ? "OK" : "ERR");
       }
     } else if (msgType == MSG_NMEA) {
-      if (currentMode == MODE_RAW) {
-        // RAWモードでNMEAメッセージを表示
-        int nextY = M5.Display.getCursorY() + lineHeight;
-        if (nextY >= M5.Display.height()) {
-          M5.Display.fillScreen(TFT_BLACK);
-          M5.Display.setCursor(0, 0);
-          updateDisplay();
-        } else {
-          M5.Display.setCursor(0, nextY);
+      // GGAメッセージの特別処理
+      if (currentNMEA.msgType == "GGA") {
+        GGAData gga = parseGGA(currentNMEA.sentence);
+        if (gga.valid) {
+          lastGGA = gga;
+          // GGAモードの場合は数値のみ更新
+          if (currentMode == MODE_GGA) {
+            updateGGAValues();
+          }
         }
-        M5.Display.setTextColor(TFT_GREEN);  // NMEAメッセージは緑色で表示
-        M5.Display.printf("NMEA: %s %s\n", currentNMEA.talker.c_str(), currentNMEA.msgType.c_str());
-        M5.Display.setTextColor(TFT_WHITE);  // 色をリセット
-      } else if (currentMode == MODE_NMEA) {
+      }
+      
+      // GSAメッセージの特別処理
+      if (currentNMEA.msgType == "GSA") {
+        GSAData gsa = parseGSA(currentNMEA.sentence);
+        if (gsa.valid) {
+          lastGSA = gsa;
+          // GGAモードの場合は数値のみ更新
+          if (currentMode == MODE_GGA) {
+            updateGGAValues();
+          }
+        }
+      }
+      
+      if (currentMode == MODE_NMEA) {
         M5.Display.fillScreen(TFT_BLACK);
         updateDisplay();
         M5.Display.printf("NMEA: %s %s\n", currentNMEA.talker.c_str(), currentNMEA.msgType.c_str());
@@ -630,10 +921,6 @@ void loop() {
           M5.Display.printf("%02X ", (uint8_t)rxLine[i]);
         }
         M5.Display.println();
-      } else {
-        // パースモード：特定データのみ表示
-        M5.Display.fillScreen(TFT_BLACK);
-        updateDisplay();
       }
       rxLine.clear();
     } else if (currentMode == MODE_HEX) {
